@@ -20,7 +20,6 @@ from controllers.CctvController import (
     update_line_trigger,
     toggle_cctv_analytic,
     get_cctv_for_snapshot,
-    reverse_direction
 )
 
 router = APIRouter()
@@ -30,12 +29,11 @@ def read_root() -> Dict[str, str]:
     return {"message": "Welcome To API Register Face INAHEF"}
 
 
-@router.get("/cctv/{cctv_id}/snapshot")
-def get_snapshot(cctv_id: int):
-    # Asumsikan fungsi get_cctv_for_snapshot sudah ada
-    camera = get_cctv_for_snapshot(cctv_id) 
+@router.get("/cctv/snapshot")
+def get_snapshot():
+    camera = get_cctv_for_snapshot() 
     if not camera:
-        raise HTTPException(status_code=404, detail=f"CCTV entry with ID {cctv_id} not found.")
+        raise HTTPException(status_code=404, detail="No CCTV entry found.")
     
     # Ambil URL murni. FFmpeg asli biasanya pintar membaca '@' di password
     rtsp_link = camera.link.strip()
@@ -91,14 +89,14 @@ def store_cctv(cctv_data: list[CCTVCreate]):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error occurred: {e}")
     
-@router.patch("/cctv/{cctv_id}/line")
-def set_cctv_line(cctv_id: int, line_data: CCTVLineUpdate):
+@router.patch("/cctv/line")
+def set_cctv_line(line_data: CCTVLineUpdate):
     try:
-        updated_camera = update_line_trigger(cctv_id, line_data)
+        updated_camera = update_line_trigger(line_data)
         if not updated_camera:
-            raise HTTPException(status_code=404, detail=f"CCTV entry with ID {cctv_id} not found.")
+            raise HTTPException(status_code=404, detail=f"CCTV entry not found.")
         return {
-            "message": f"CCTV entry with ID {cctv_id} line trigger updated successfully.",
+            "message": f"CCTV entry line trigger updated successfully.",
             "data": {
                 "id": updated_camera.id,
                 "lokasi": updated_camera.lokasi,
@@ -112,28 +110,28 @@ def set_cctv_line(cctv_id: int, line_data: CCTVLineUpdate):
         raise HTTPException(status_code=500, detail=f"Error occurred: {e}")
     
 
-@router.patch("/cctv/{cctv_id}/toggle", response_model=CCTVResponse)
-def set_analytic_status(cctv_id: int, status_data: CCTVToogleAnalytic):
+@router.patch("/cctv/toggle", response_model=CCTVResponse)
+def set_analytic_status(status_data: CCTVToogleAnalytic):
     try:
-        updated_camera = toggle_cctv_analytic(cctv_id, status_data)
+        updated_camera = toggle_cctv_analytic(status_data)
         if not updated_camera:
-            raise HTTPException(status_code=404, detail=f"CCTV entry with ID {cctv_id} not found.")
+            raise HTTPException(status_code=404, detail=f"CCTV entry not found.")
         return  updated_camera
         
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error occurred: {e}")
     
 
-@router.patch("/cctv/{cctv_id}/reverse")
-def toggle_reverse_direction(cctv_id: int):
+@router.patch("/cctv/reverse")
+def toggle_reverse_direction():
     try:
-        updated_camera = reverse_direction(cctv_id)
+        updated_camera = reverse_direction()
         if not updated_camera:
-            raise HTTPException(status_code=404, detail=f"CCTV entry with ID {cctv_id} not found.")
+            raise HTTPException(status_code=404, detail=f"CCTV entry not found.")
         return {
-            "message": f"CCTV entry with ID {cctv_id} reverse direction toggled successfully.",
+            "message": f"CCTV entry reverse direction toggled successfully.",
             "data": {
-                "id": updated_camera.id,
+                # "id": updated_camera.id,
                 "lokasi": updated_camera.lokasi,
                 "is_reversed": updated_camera.is_reversed
             }

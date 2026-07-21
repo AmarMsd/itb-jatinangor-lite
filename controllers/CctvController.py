@@ -35,10 +35,11 @@ def create_cctv(cctv_data: List[CCTVCreate]):
         finally:
             db.close()  
 
-def update_line_trigger(cctv_id: int, line_data: CCTVLineUpdate):
+def update_line_trigger(line_data: CCTVLineUpdate):
     with get_db_context() as db:
         try:
-            camera = db.query(CCTV).filter(CCTV.id == cctv_id).first()
+            camera = db.query(CCTV).first()
+            # camera = db.query(CCTV).filter(CCTV.id == cctv_id).first()
             if not camera:
                 print(f"CCTV entry with ID {cctv_id} not found.")
                 return None
@@ -56,12 +57,13 @@ def update_line_trigger(cctv_id: int, line_data: CCTVLineUpdate):
             db.rollback()
             raise e  
 
-def toggle_cctv_analytic(cctv_id: int, status_data: CCTVToogleAnalytic):
+def toggle_cctv_analytic(status_data: CCTVToogleAnalytic):
     with get_db_context() as db:
         try:
-            camera = db.query(CCTV).filter(CCTV.id == cctv_id).first()
+            camera = db.query(CCTV).first()
+            # camera = db.query(CCTV).filter(CCTV.id == cctv_id).first()
             if not camera:
-                print(f"CCTV entry with ID {cctv_id} not found.")
+                print(f"CCTV not found.")
                 return None
 
             camera.active = status_data.active
@@ -74,23 +76,36 @@ def toggle_cctv_analytic(cctv_id: int, status_data: CCTVToogleAnalytic):
             db.rollback()
             raise e
 
-def get_cctv_for_snapshot(cctv_id: int):
+def get_cctv_for_snapshot():
     with get_db_context() as db:
         try:
-            camera = db.query(CCTV).filter(CCTV.id == cctv_id).first()
+            camera = db.query(CCTV).first()
             if not camera:
-                print(f"CCTV entry with ID {cctv_id} not found.")
+                print("No CCTV entry found.")
                 return None
             return camera
         except Exception as e:
             raise e
 
-def reverse_direction(cctv_id: int):
+# def reverse_direction():
+#     with get_db_context() as db:
+#         try:
+#             camera = db.query(CCTV).first()
+#             # camera = db.query(CCTV).filter(CCTV.id == cctv_id).first()
+#             if not camera:
+#                 return None
+#             return camera
+#         except Exception as e:
+#             raise e
+
+def reverse_direction():
     with get_db_context() as db:
         try:
-            camera = db.query(CCTV).filter(CCTV.id == cctv_id).first()
+            camera = db.query(CCTV).first()
+
+            # camera = db.query(CCTV).filter(CCTV.id == cctv_id).first()
             if not camera:
-                print(f"CCTV entry with ID {cctv_id} not found.")
+                print(f"CCTV not found.")
                 return None
 
             camera.is_reversed = not camera.is_reversed

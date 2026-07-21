@@ -47,8 +47,13 @@ def run_hls_worker(cctv_id: int):
         '-s', f'{WIDTH}x{HEIGHT}', 'pipe:'
     ]
     process_in = subprocess.Popen(command_in, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
-
-    hls_output_path = f'./stream/{lokasi}.m3u8' 
+    
+    stream_dir = os.path.join(root_dir, 'stream')
+    os.makedirs(stream_dir, exist_ok=True)
+    
+    hls_output_path = os.path.join(stream_dir, f'{lokasi}.m3u8')
+    # hls_output_path = f'./stream/{lokasi}.m3u8' 
+    
     command_out = [
         'ffmpeg', '-y', '-f', 'rawvideo', '-vcodec', 'rawvideo', '-pix_fmt', 'bgr24',
         '-s', f'{WIDTH}x{HEIGHT}', '-r', '10', '-i', '-', 
@@ -63,6 +68,9 @@ def run_hls_worker(cctv_id: int):
     
     frame_count = 0
     track_history = {}
+
+    last_logged_time = {}
+    COOLDOWN_SECOND = 10
 
     try:
         while True:
@@ -85,6 +93,11 @@ def run_hls_worker(cctv_id: int):
                         is_analytic_active = db_cam.active # Update status aktif/mati
                         is_reversed = db_cam.is_reversed   # Update status arah
 
+            if frame_count % 5000 == 0:
+                current_time = time.time()
+                track_history = {k: v for k, v in track_history.items() if (current_time - last_logged_time.get(k, 0)) < 30}
+                last_logged_time = {k: v for k, v in last_logged_time.items() if (current_time - v) < 30}
+                
             if is_analytic_active == 1:
                 frame = np.frombuffer(raw_bytes, dtype=np.uint8).reshape((HEIGHT, WIDTH, 3))
                 
@@ -99,6 +112,8 @@ def run_hls_worker(cctv_id: int):
                 )
 
                 garis_y_tengah = (line_coords["y1"] + line_coords["y2"]) // 2
+                
+                
 
                 if results[0].boxes.id is not None:
                     boxes = results[0].boxes.xywh.cpu()
@@ -120,6 +135,8 @@ def run_hls_worker(cctv_id: int):
                             if is_reversed:
                                 arah_atas_ke_bawah = "in"
                                 arah_bawah_ke_atas = "out"
+                            
+                            detected_direction = None
 
                             # Deteksi pergerakan: Atas -> Bawah
                             if prev_y < garis_y_tengah and y_center >= garis_y_tengah:
@@ -130,6 +147,18 @@ def run_hls_worker(cctv_id: int):
                             elif prev_y > garis_y_tengah and y_center <= garis_y_tengah:
                                 print(f"[{arah_bawah_ke_atas.upper()}] Kendaraan ID {track_id} (Class {cls_id})")
                                 save_detection(cctv_id, cls_id, arah_bawah_ke_atas)
+                            
+                            if detected_direction:
+                                current_time = time.time()
+                                last_time = last_logged_time.get(track_id, 0)
+
+                                if (current_time - last_time) >= COOLDOWN_SECOND:
+                                    print(f"[{detected_direction.upper()}] Kendaraan ID {track_id} (Class {cls_id})")
+                                    save_detection(cctv_id, cls_id, detected_direction)
+
+                                    last_logged_time[track_id] = current_time
+                                else:
+                                    pass
 
                         track_history[track_id] = y_center
 
