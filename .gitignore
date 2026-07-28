@@ -1,2 +1,7 @@
 venv/
 __pycache__/
+stream/*
+dist/
+build/
+main.spec
+dist_custom/

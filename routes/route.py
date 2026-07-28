@@ -16,31 +16,39 @@ from schemas.CctvSchemas import (
     
 from controllers.CctvController import (
     create_cctv,
+    get_all_cctv,
     reverse_direction,
     update_line_trigger,
     toggle_cctv_analytic,
     get_cctv_for_snapshot,
+    save_path_hls_detection,
+    delete_cctv
 )
 
 router = APIRouter()
 
 @router.get("/")
 def read_root() -> Dict[str, str]:
-    return {"message": "Welcome To API Register Face INAHEF"}
+    return {"message": "Welcome To API People Count"}
 
+@router.get("/cctv", response_model=List[CCTVResponse])
+def get_cctv_list():
+    try:
+        cameras = get_all_cctv()
+        return cameras
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error occurred: {e}")
 
-@router.get("/cctv/snapshot")
-def get_snapshot():
-    camera = get_cctv_for_snapshot() 
+@router.get("/cctv/{cctv_id}/snapshot")
+def get_snapshot(cctv_id: int):
+    camera = get_cctv_for_snapshot(cctv_id) 
     if not camera:
         raise HTTPException(status_code=404, detail="No CCTV entry found.")
     
-    # Ambil URL murni. FFmpeg asli biasanya pintar membaca '@' di password
     rtsp_link = camera.link.strip()
     
     print(f"\n[*] Meminta FFmpeg mengambil 1 frame dari RTSP...")
     
-    # Perintah memanggil FFmpeg untuk mengambil 1 gambar (vframes 1)
     command = [
         'ffmpeg',
         '-y',                           # Timpa file jika ada (meski kita pakai pipe)
@@ -53,7 +61,6 @@ def get_snapshot():
     ]
     
     try:
-        # Jalankan FFmpeg, tunggu maksimal 10 detik
         process = subprocess.run(
             command, 
             stdout=subprocess.PIPE, 
@@ -61,7 +68,6 @@ def get_snapshot():
             timeout=10
         )
         
-        # Cek apakah FFmpeg gagal (exit code bukan 0)
         if process.returncode != 0:
             error_log = process.stderr.decode()
             print(f"[!] FFmpeg Gagal: {error_log}")
@@ -71,7 +77,6 @@ def get_snapshot():
         image_bytes = process.stdout
         print("[*] SUKSES: Gambar berhasil diekstrak dengan FFmpeg!")
         
-        # Langsung tembakkan ke frontend
         return StreamingResponse(io.BytesIO(image_bytes), media_type="image/jpeg")
         
     except subprocess.TimeoutExpired:
@@ -89,10 +94,10 @@ def store_cctv(cctv_data: list[CCTVCreate]):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error occurred: {e}")
     
-@router.patch("/cctv/line")
-def set_cctv_line(line_data: CCTVLineUpdate):
+@router.patch("/cctv/{cctv_id}/line")
+def set_cctv_line(cctv_id: int, line_data: CCTVLineUpdate):
     try:
-        updated_camera = update_line_trigger(line_data)
+        updated_camera = update_line_trigger(cctv_id, line_data)
         if not updated_camera:
             raise HTTPException(status_code=404, detail=f"CCTV entry not found.")
         return {
@@ -110,10 +115,10 @@ def set_cctv_line(line_data: CCTVLineUpdate):
         raise HTTPException(status_code=500, detail=f"Error occurred: {e}")
     
 
-@router.patch("/cctv/toggle", response_model=CCTVResponse)
-def set_analytic_status(status_data: CCTVToogleAnalytic):
+@router.patch("/cctv/{cctv_id}/toggle", response_model=CCTVResponse)
+def set_analytic_status(cctv_id: int, status_data: CCTVToogleAnalytic):
     try:
-        updated_camera = toggle_cctv_analytic(status_data)
+        updated_camera = toggle_cctv_analytic(cctv_id, status_data)
         if not updated_camera:
             raise HTTPException(status_code=404, detail=f"CCTV entry not found.")
         return  updated_camera
@@ -122,10 +127,10 @@ def set_analytic_status(status_data: CCTVToogleAnalytic):
         raise HTTPException(status_code=500, detail=f"Error occurred: {e}")
     
 
-@router.patch("/cctv/reverse")
-def toggle_reverse_direction():
+@router.patch("/cctv/{cctv_id}/reverse")
+def toggle_reverse_direction(cctv_id: int):
     try:
-        updated_camera = reverse_direction()
+        updated_camera = reverse_direction(cctv_id)
         if not updated_camera:
             raise HTTPException(status_code=404, detail=f"CCTV entry not found.")
         return {
@@ -135,6 +140,19 @@ def toggle_reverse_direction():
                 "lokasi": updated_camera.lokasi,
                 "is_reversed": updated_camera.is_reversed
             }
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error occurred: {e}")
+
+@router.delete("/cctv_delete/{cctv_id}")
+def remove_cctv(cctv_id: int):
+    try:
+        deleted = delete_cctv(cctv_id)
+        if not deleted:
+            raise HTTPException(status_code=404, detail="CCTV tidak ditemukan.")
+        
+        return {
+            "message": "CCTV berhasil dihapus."
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error occurred: {e}")

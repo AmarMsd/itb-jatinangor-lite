@@ -8,14 +8,16 @@ import subprocess
 import numpy as np
 from ultralytics import YOLO
 import time
+from sqlalchemy.exc import OperationalError
 
+from models import SessionLocal 
 from models.CCTV import CCTV
-from utils.connection.connection_db import get_db_context
 from models.Detection import Detection
+from controllers.CctvController import save_path_hls_detection
 
 def run_hls_worker(cctv_id: int):
-    # 1. Inisialisasi awal
-    with get_db_context() as db:
+    db = SessionLocal()
+    try:
         camera = db.query(CCTV).filter(CCTV.id == cctv_id).first()
         if not camera:
             print(f"[!] Error: CCTV ID {cctv_id} tidak ditemukan.")
@@ -30,6 +32,8 @@ def run_hls_worker(cctv_id: int):
         }
         is_analytic_active = camera.active
         is_reversed = camera.is_reversed
+    finally:
+        db.close() # Tutup segera setelah dapat data awal
 
     print(f"[*] Memulai Worker HLS untuk {lokasi}...")
 
@@ -50,15 +54,23 @@ def run_hls_worker(cctv_id: int):
     
     stream_dir = os.path.join(root_dir, 'stream')
     os.makedirs(stream_dir, exist_ok=True)
-    
-    hls_output_path = os.path.join(stream_dir, f'{lokasi}.m3u8')
-    # hls_output_path = f'./stream/{lokasi}.m3u8' 
+
+    nama_file = f'cctv_{cctv_id}.m3u8'
+    hls_output_path = os.path.join(stream_dir, nama_file)
+    hls_url_for_frontend = f'/stream/{nama_file}'
+
+    try:
+        save_path_hls_detection(cctv_id, hls_url_for_frontend)
+        print(f"[*] Path HLS otomatis disimpan ke DB: {hls_url_for_frontend}")
+    except Exception as e:
+        print(f"[!] Peringatan: Gagal menyimpan path HLS otomatis. Detail: {e}")
     
     command_out = [
         'ffmpeg', '-y', '-f', 'rawvideo', '-vcodec', 'rawvideo', '-pix_fmt', 'bgr24',
         '-s', f'{WIDTH}x{HEIGHT}', '-r', '10', '-i', '-', 
         '-c:v', 'libx264', '-preset', 'ultrafast', '-tune', 'zerolatency', '-f', 'hls',
-        '-hls_time', '2', '-hls_list_size', '3', '-hls_flags', 'delete_segments',
+        '-hls_time', '1', '-hls_list_size', '5', '-hls_flags', 'delete_segments+append_list', 
+        '-g', '10',
         hls_output_path
     ]
     process_out = subprocess.Popen(command_out, stdin=subprocess.PIPE, stderr=subprocess.DEVNULL)
@@ -68,7 +80,6 @@ def run_hls_worker(cctv_id: int):
     
     frame_count = 0
     track_history = {}
-
     last_logged_time = {}
     COOLDOWN_SECOND = 10
 
@@ -83,15 +94,22 @@ def run_hls_worker(cctv_id: int):
 
             # Refresh data dari database setiap 30 frame
             if frame_count % 30 == 0:
-                with get_db_context() as db:
-                    db_cam = db.query(CCTV).filter(CCTV.id == cctv_id).first()
+                db_refresh = SessionLocal()
+                try:
+                    db_cam = db_refresh.query(CCTV).filter(CCTV.id == cctv_id).first()
                     if db_cam:
                         line_coords = {
                             "x1": db_cam.line_x1, "y1": db_cam.line_y1,
                             "x2": db_cam.line_x2, "y2": db_cam.line_y2
                         }
-                        is_analytic_active = db_cam.active # Update status aktif/mati
-                        is_reversed = db_cam.is_reversed   # Update status arah
+                        is_analytic_active = db_cam.active 
+                        is_reversed = db_cam.is_reversed   
+                finally:
+                    db_refresh.close()
+                
+                if is_analytic_active == 0:
+                    print(f"\n[!] CCTV ID {cctv_id} telah dinonaktifkan. Menghentikan proses ini...")
+                    break
 
             if frame_count % 5000 == 0:
                 current_time = time.time()
@@ -112,15 +130,12 @@ def run_hls_worker(cctv_id: int):
                 )
 
                 garis_y_tengah = (line_coords["y1"] + line_coords["y2"]) // 2
-                
-                
 
                 if results[0].boxes.id is not None:
                     boxes = results[0].boxes.xywh.cpu()
                     track_ids = results[0].boxes.id.int().cpu().tolist()
-                    class_ids = results[0].boxes.cls.int().cpu().tolist() # Ambil ID Kelas
+                    class_ids = results[0].boxes.cls.int().cpu().tolist()
 
-                    # Masukkan class_ids ke dalam loop
                     for box, track_id, cls_id in zip(boxes, track_ids, class_ids):
                         _, y_center, _, _ = box
                         y_center = int(y_center)
@@ -128,26 +143,18 @@ def run_hls_worker(cctv_id: int):
                         if track_id in track_history:
                             prev_y = track_history[track_id]
                             
-                            # Logika Arah Dinamis
-                            arah_atas_ke_bawah = "out"
-                            arah_bawah_ke_atas = "in"
-                            
-                            if is_reversed:
-                                arah_atas_ke_bawah = "in"
-                                arah_bawah_ke_atas = "out"
+                            arah_atas_ke_bawah = "in" if is_reversed else "out"
+                            arah_bawah_ke_atas = "out" if is_reversed else "in"
                             
                             detected_direction = None
 
-                            # Deteksi pergerakan: Atas -> Bawah
+                            # Deteksi pergerakan
                             if prev_y < garis_y_tengah and y_center >= garis_y_tengah:
-                                print(f"[{arah_atas_ke_bawah.upper()}] Kendaraan ID {track_id} (Class {cls_id})")
-                                save_detection(cctv_id, cls_id, arah_atas_ke_bawah)
-
-                            # Deteksi pergerakan: Bawah -> Atas
+                                detected_direction = arah_atas_ke_bawah
                             elif prev_y > garis_y_tengah and y_center <= garis_y_tengah:
-                                print(f"[{arah_bawah_ke_atas.upper()}] Kendaraan ID {track_id} (Class {cls_id})")
-                                save_detection(cctv_id, cls_id, arah_bawah_ke_atas)
+                                detected_direction = arah_bawah_ke_atas
                             
+                            # Logika Cooldown yang sudah diperbaiki
                             if detected_direction:
                                 current_time = time.time()
                                 last_time = last_logged_time.get(track_id, 0)
@@ -155,15 +162,11 @@ def run_hls_worker(cctv_id: int):
                                 if (current_time - last_time) >= COOLDOWN_SECOND:
                                     print(f"[{detected_direction.upper()}] Kendaraan ID {track_id} (Class {cls_id})")
                                     save_detection(cctv_id, cls_id, detected_direction)
-
                                     last_logged_time[track_id] = current_time
-                                else:
-                                    pass
 
                         track_history[track_id] = y_center
 
                 process_out.stdin.write(annotated_frame.tobytes())
-                
             else:
                 process_out.stdin.write(raw_bytes)
 
@@ -177,13 +180,13 @@ def run_hls_worker(cctv_id: int):
         print("[*] Proses FFmpeg dimatikan dengan aman.")
     
 def save_detection(cctv_id: int, cls_id: int, direction: str):
-    """Menyimpan log in/out ke tabel result sesuai class objeknya."""
-    
     mobil_val = 1 if cls_id == 2 else 0
     motor_val = 1 if cls_id == 3 else 0
     person_val = 1 if cls_id == 0 else 0
 
-    with get_db_context() as db:
+    max_retries = 5
+    for attempt in range(max_retries):
+        db = SessionLocal()
         try:
             new_record = Detection(
                 cctv_id=cctv_id,
@@ -195,9 +198,47 @@ def save_detection(cctv_id: int, cls_id: int, direction: str):
             db.add(new_record)
             db.commit()
             print(f"[DB] Sukses menyimpan: {direction.upper()} (Person:{person_val}, Mobil:{mobil_val}, Motor:{motor_val})")
+            return
+
+        
         except Exception as e:
             db.rollback()
             print(f"[!] Gagal menyimpan ke database: {e}")
+            return
+        finally:
+            db.close()
+
+def get_active_cctv_id():
+    db = SessionLocal()
+    try:
+        camera = db.query(CCTV).filter(CCTV.active == 1).first()
+        if camera:
+            return camera.id
+        return None
+    finally:
+        db.close()
 
 if __name__ == "__main__":
-    run_hls_worker(cctv_id=1)
+    print("[*] Memulai Radar Worker CCTV...")
+    last_active_id = None  
+
+    while True:
+        target_id = get_active_cctv_id()
+        
+        if target_id:
+            if target_id != last_active_id:
+                print("\n==================================================")
+                print(f"[*] RESTARTING WORKER -> Beralih ke CCTV ID: {target_id}")
+                print("==================================================")
+                last_active_id = target_id
+                
+            run_hls_worker(cctv_id=target_id)
+            
+            last_active_id = None 
+            time.sleep(2) 
+        else:
+            if last_active_id is not None or target_id != last_active_id:
+                print("\n[*] Tidak ada CCTV yang aktif. Menunggu perintah dari Dashboard...")
+                last_active_id = target_id # Set ke None agar tidak spam print
+                
+            time.sleep(5)

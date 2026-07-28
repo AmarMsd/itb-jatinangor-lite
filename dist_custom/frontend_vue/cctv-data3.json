@@ -1,0 +1,64 @@
+[
+  {
+    "id": "gedung-utama",
+    "name": "Gedung Utama",
+    "model": "/asset-rsud-sumedang/model/Basement.glb",
+    "svg": "/asset-rsud-sumedang/svg/denah_parkir.svg",
+    "rooms": [
+      { "id": 1, "name": "Lobby",       "x": 85,  "y": 105, "width": 110, "height": 70, "type": "face recognition" },
+      { "id": 2, "name": "IGD",         "x": 280, "y": 105, "width": 110, "height": 70, "type": "normal" },
+      { "id": 3, "name": "Koridor",     "x": 470, "y": 105, "width": 140, "height": 70, "type": "suspicious person" },
+      { "id": 4, "name": "Farmasi",     "x": 170, "y": 280, "width": 120, "height": 70, "type": "normal" },
+      { "id": 5, "name": "Ruang Rawat", "x": 430, "y": 280, "width": 170, "height": 70, "type": "face recognition" }
+    ],
+    "cameras": [
+      {
+        "id": "cam-gu-1",
+        "name": "Kamera 1 - Lobi",
+        "src": "https://cctvjss.jogjakota.go.id/atcs/ATCS_bpk.stream/playlist.m3u8",
+        "pos": { "x": 5, "y": 1, "z": 5 },
+        "directionDeg": 40,
+        "distance": 12
+      },
+      {
+        "id": "cam-gu-2",
+        "name": "Kamera 2 - Pintu Masuk",
+        "src": "https://cctvjss.jogjakota.go.id/atcs/ATCS_Lampu_Merah_SugengJeroni2.stream/playlist.m3u8",
+        "pos": { "x": -8, "y": 1, "z": 3 },
+        "directionDeg": 120,
+        "distance": 12
+      }
+    ]
+  },
+  {
+    "id": "gedung-rawat-inap",
+    "name": "Gedung Rawat Inap",
+    "model": "/asset-rsud-sumedang/model/Gedung IIP Master.glb",
+    "svg": "/denah_parkir.svg",
+    "rooms": [
+      { "id": 1, "name": "Nurse Station", "x": 85,  "y": 105, "width": 130, "height": 70, "type": "face recognition" },
+      { "id": 2, "name": "Koridor Lt.1",  "x": 280, "y": 105, "width": 130, "height": 70, "type": "normal" },
+      { "id": 3, "name": "ICU",           "x": 470, "y": 105, "width": 110, "height": 70, "type": "suspicious person" },
+      { "id": 4, "name": "Kelas 1",       "x": 130, "y": 280, "width": 130, "height": 70, "type": "normal" },
+      { "id": 5, "name": "Kelas 2",       "x": 350, "y": 280, "width": 130, "height": 70, "type": "face recognition" }
+    ],
+    "cameras": [
+      {
+        "id": "cam-ri-1",
+        "name": "Kamera 1 - Koridor Lt.1",
+        "src": "https://example.com/cam3/stream.m3u8",
+        "pos": { "x": 10, "y": 1, "z": -4 },
+        "directionDeg": -60,
+        "distance": 12
+      },
+      {
+        "id": "cam-ri-2",
+        "name": "Kamera 2 - Nurse Station",
+        "src": "https://example.com/cam4/stream.m3u8",
+        "pos": { "x": -3, "y": 1, "z": -6 },
+        "directionDeg": 200,
+        "distance": 12
+      }
+    ]
+  }
+]

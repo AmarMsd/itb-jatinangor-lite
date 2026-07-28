@@ -1,8 +1,7 @@
 from sqlalchemy import Column, Integer, String, DateTime, Boolean
-from sqlalchemy.sql import func
-from sqlalchemy.orm import declarative_base
+from datetime import datetime 
+from models import Base
 
-Base = declarative_base()
 
 class CCTV(Base):
     __tablename__ = 'cctv'
@@ -16,5 +15,6 @@ class CCTV(Base):
     line_y1 = Column(Integer, default=0)
     line_x2 = Column(Integer, default=0)
     line_y2 = Column(Integer, default=0)
-
-    created_at = Column(DateTime, default=func.now())
+    hls_output = Column(String(255), nullable=True)
+    created_at = Column(DateTime, default=datetime.now)
+    

@@ -1,0 +1,21 @@
+[
+  {
+    "title": "Dashboard",
+    "icon": "dashboard",
+    "path": "/dashboard",
+    "active": true
+  },
+  {
+    "title": "Monitoring",
+    "icon": "monitoring",
+    "path": "/monitoring",
+    "active": true
+  },
+  {
+    "title": "Kamera",
+    "icon": "video",
+    "path": "/kamera",
+    "active": true
+  }
+]
+

@@ -1,8 +1,6 @@
 from sqlalchemy import Column, Integer, String, DateTime
-from sqlalchemy.sql import func
-from sqlalchemy.orm import declarative_base
-
-Base = declarative_base()
+from datetime import datetime 
+from models import Base
 
 class Detection(Base):
     __tablename__ = 'result'
@@ -13,4 +11,6 @@ class Detection(Base):
     motor = Column(Integer, default=0)
     person = Column(Integer, default=0)
     direction = Column(String(50), nullable=True)
-    timestamps = Column(DateTime, default=func.now())
+
+    timestamps = Column(DateTime, default=datetime.now)
+    # timestamps = Column(DateTime, default=func.now())
