@@ -14,6 +14,11 @@ from models import SessionLocal
 from models.CCTV import CCTV
 from models.Detection import Detection
 from controllers.CctvController import save_path_hls_detection
+from models import SessionLocal  
+from models.CCTV import CCTV 
+import time
+import traceback
+import sys
 
 def run_hls_worker(cctv_id: int):
     db = SessionLocal()
@@ -23,7 +28,7 @@ def run_hls_worker(cctv_id: int):
             print(f"[!] Error: CCTV ID {cctv_id} tidak ditemukan.")
             return
         
-        rtsp_link = camera.link
+        stream_url = camera.link
         lokasi = camera.lokasi.lower().replace(" ", "_")
         
         line_coords = {
@@ -33,25 +38,24 @@ def run_hls_worker(cctv_id: int):
         is_analytic_active = camera.active
         is_reversed = camera.is_reversed
     finally:
-        db.close() # Tutup segera setelah dapat data awal
+        db.close() 
 
     print(f"[*] Memulai Worker HLS untuk {lokasi}...")
 
+    print("[*] Memuat Model YOLOv8")
+    model = YOLO("yolov8n.pt")
+    dummy_frame = np.zeros((720, 1280, 3), dtype=np.uint8)
+    model.track(dummy_frame, persist=True, verbose=False, device='cpu')
+    print("[*] Memulai stream...")
+    
     WIDTH, HEIGHT = 1280, 720
     FRAME_SIZE = WIDTH * HEIGHT * 3
 
-    command_in = [
-        'ffmpeg', '-y', 
-        '-fflags', 'nobuffer',        
-        '-flags', 'low_delay',        
-        '-rtsp_transport', 'tcp',
-        '-i', rtsp_link, 
-        '-r', '10',           # fps       
-        '-f', 'rawvideo', '-pix_fmt', 'bgr24',
-        '-s', f'{WIDTH}x{HEIGHT}', 'pipe:'
-    ]
-    process_in = subprocess.Popen(command_in, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
-    
+    if getattr(sys, 'frozen', False):
+        root_dir = os.path.dirname(sys.executable)
+    else:
+        root_dir = os.path.dirname(os.path.abspath(__file__))
+
     stream_dir = os.path.join(root_dir, 'stream')
     os.makedirs(stream_dir, exist_ok=True)
 
@@ -63,40 +67,92 @@ def run_hls_worker(cctv_id: int):
         save_path_hls_detection(cctv_id, hls_url_for_frontend)
         print(f"[*] Path HLS otomatis disimpan ke DB: {hls_url_for_frontend}")
     except Exception as e:
-        print(f"[!] Peringatan: Gagal menyimpan path HLS otomatis. Detail: {e}")
+        pass 
+
+    print("[*] Membuka koneksi RTSP...")
+    is_rtsp = stream_url.lower().startswith("rtsp://")
+    command_in = ['ffmpeg', '-y']
+
+    if is_rtsp:
+        command_in.extend([
+            '-fflags', 'nobuffer',        
+            '-flags', 'low_delay',        
+            '-rtsp_transport', 'tcp'
+        ])
+    else:
+        command_in.extend([
+            '-reconnect', '1', 
+            '-reconnect_streamed', '1', 
+            '-reconnect_delay_max', '5'
+        ])
+
+    command_in.extend([
+        '-i', stream_url,
+        '-r', '10',
+        '-f', 'rawvideo', '-pix_fmt', 'bgr24',
+        '-s', f'{WIDTH}x{HEIGHT}', 'pipe:'
+    ])
     
+    # process_in = subprocess.Popen(command_in, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+    process_in = subprocess.Popen(command_in, stdout=subprocess.PIPE)
+
+    print("[*] Menunggu frame pertama dari kamera...")
+    first_frame_bytes = process_in.stdout.read(FRAME_SIZE)
+    
+    if len(first_frame_bytes) != FRAME_SIZE:
+        print(f"[!] GAGAL: Tidak bisa mendapatkan video dari CCTV ID {cctv_id}.")
+        process_in.kill()
+        return  
+
+    print("[*] Frame pertama diterima! Menyalakan stream HLS...")
     command_out = [
-        'ffmpeg', '-y', '-f', 'rawvideo', '-vcodec', 'rawvideo', '-pix_fmt', 'bgr24',
-        '-s', f'{WIDTH}x{HEIGHT}', '-r', '10', '-i', '-', 
-        '-c:v', 'libx264', '-preset', 'ultrafast', '-tune', 'zerolatency', '-f', 'hls',
-        '-hls_time', '1', '-hls_list_size', '5', '-hls_flags', 'delete_segments+append_list', 
-        '-g', '10',
+        'ffmpeg', '-y', 
+        '-f', 'rawvideo', '-vcodec', 'rawvideo', '-pix_fmt', 'bgr24',
+        '-s', f'{WIDTH}x{HEIGHT}', '-r', '10', 
+        '-i', '-', 
+        '-an', 
+        '-c:v', 'libx264', '-preset', 'ultrafast', '-tune', 'zerolatency', 
+        '-pix_fmt', 'yuv420p',
+        '-f', 'hls',
+        '-hls_time', '2', '-hls_list_size', '3', '-hls_flags', 'delete_segments', 
+        '-g', '20',
         hls_output_path
     ]
     process_out = subprocess.Popen(command_out, stdin=subprocess.PIPE, stderr=subprocess.DEVNULL)
 
-    print("[*] Memuat Model YOLOv8...")
-    model = YOLO("yolov8n.pt") 
-    
-    frame_count = 0
+    try:
+        process_out.stdin.write(first_frame_bytes)
+        process_out.stdin.flush()
+    except:
+        pass
+
+    frame_count = 1
     track_history = {}
     last_logged_time = {}
     COOLDOWN_SECOND = 10
-
+    last_db_check_time = time.time()
+    
     try:
         while True:
+            if process_out.poll() is not None:
+                print(f"\n[!] ERROR FATAL: FFmpeg HLS mati tiba-tiba!")
+                break
+
             raw_bytes = process_in.stdout.read(FRAME_SIZE)
             if len(raw_bytes) != FRAME_SIZE:
-                print("[!] Stream terputus.")
+                print(f"\n[!] Koneksi RTSP terputus di tengah jalan.")
                 break
                 
             frame_count += 1
+            current_time = time.time()
 
-            # Refresh data dari database setiap 30 frame
-            if frame_count % 30 == 0:
+            if current_time - last_db_check_time >= 3.0:
+                last_db_check_time = current_time
                 db_refresh = SessionLocal()
                 try:
                     db_cam = db_refresh.query(CCTV).filter(CCTV.id == cctv_id).first()
+                    active_cam = db_refresh.query(CCTV).filter(CCTV.active == 1).first()
+
                     if db_cam:
                         line_coords = {
                             "x1": db_cam.line_x1, "y1": db_cam.line_y1,
@@ -107,8 +163,8 @@ def run_hls_worker(cctv_id: int):
                 finally:
                     db_refresh.close()
                 
-                if is_analytic_active == 0:
-                    print(f"\n[!] CCTV ID {cctv_id} telah dinonaktifkan. Menghentikan proses ini...")
+                if is_analytic_active == 0 or (active_cam and active_cam.id != cctv_id):
+                    print(f"\n[!] CCTV ID {cctv_id} dinonaktifkan. Menghentikan proses...")
                     break
 
             if frame_count % 5000 == 0:
@@ -118,17 +174,10 @@ def run_hls_worker(cctv_id: int):
                 
             if is_analytic_active == 1:
                 frame = np.frombuffer(raw_bytes, dtype=np.uint8).reshape((HEIGHT, WIDTH, 3))
-                
                 results = model.track(frame, persist=True, verbose=False, classes=[0, 2, 3], imgsz=480, conf=0.5, iou=0.5, device='cpu')  
                 annotated_frame = results[0].plot()
 
-                cv2.line(
-                    annotated_frame, 
-                    (line_coords["x1"], line_coords["y1"]), 
-                    (line_coords["x2"], line_coords["y2"]), 
-                    (0, 255, 0), 3
-                )
-
+                cv2.line(annotated_frame, (line_coords["x1"], line_coords["y1"]), (line_coords["x2"], line_coords["y2"]), (0, 255, 0), 3)
                 garis_y_tengah = (line_coords["y1"] + line_coords["y2"]) // 2
 
                 if results[0].boxes.id is not None:
@@ -142,43 +191,58 @@ def run_hls_worker(cctv_id: int):
 
                         if track_id in track_history:
                             prev_y = track_history[track_id]
-                            
                             arah_atas_ke_bawah = "in" if is_reversed else "out"
                             arah_bawah_ke_atas = "out" if is_reversed else "in"
-                            
                             detected_direction = None
 
-                            # Deteksi pergerakan
                             if prev_y < garis_y_tengah and y_center >= garis_y_tengah:
                                 detected_direction = arah_atas_ke_bawah
                             elif prev_y > garis_y_tengah and y_center <= garis_y_tengah:
                                 detected_direction = arah_bawah_ke_atas
                             
-                            # Logika Cooldown yang sudah diperbaiki
                             if detected_direction:
-                                current_time = time.time()
-                                last_time = last_logged_time.get(track_id, 0)
-
-                                if (current_time - last_time) >= COOLDOWN_SECOND:
+                                if (current_time - last_logged_time.get(track_id, 0)) >= COOLDOWN_SECOND:
                                     print(f"[{detected_direction.upper()}] Kendaraan ID {track_id} (Class {cls_id})")
                                     save_detection(cctv_id, cls_id, detected_direction)
                                     last_logged_time[track_id] = current_time
 
                         track_history[track_id] = y_center
-
-                process_out.stdin.write(annotated_frame.tobytes())
+                
+                try:
+                    process_out.stdin.write(annotated_frame.tobytes())
+                    process_out.stdin.flush() 
+                except Exception as e:
+                    print(f"\n[!] Gagal mengirim frame hasil analitik ke M3U8: {e}")
+                    break
             else:
-                process_out.stdin.write(raw_bytes)
+                try:
+                    process_out.stdin.write(raw_bytes)
+                    process_out.stdin.flush()
+                except Exception as e:
+                    print(f"\n[!] Gagal mengirim frame mentah ke M3U8: {e}")
+                    break
 
     except KeyboardInterrupt:
         print("[*] Worker dihentikan oleh pengguna.")
     except Exception as e:
         print(f"[!] Terjadi kesalahan internal: {e}")
     finally:
-        process_in.kill()
-        process_out.kill()
-        print("[*] Proses FFmpeg dimatikan dengan aman.")
+        try:
+            if process_in:
+                process_in.kill()
+            if process_out:
+                process_out.kill()
+            
+            if process_in:
+                process_in.communicate()
+            if process_out:
+                process_out.communicate()
+        except Exception:
+            pass
+        
+        print("[*] Proses stream dimatikan dengan aman.")
     
+
 def save_detection(cctv_id: int, cls_id: int, direction: str):
     mobil_val = 1 if cls_id == 2 else 0
     motor_val = 1 if cls_id == 3 else 0
@@ -199,7 +263,6 @@ def save_detection(cctv_id: int, cls_id: int, direction: str):
             db.commit()
             print(f"[DB] Sukses menyimpan: {direction.upper()} (Person:{person_val}, Mobil:{mobil_val}, Motor:{motor_val})")
             return
-
         
         except Exception as e:
             db.rollback()
@@ -218,27 +281,3 @@ def get_active_cctv_id():
     finally:
         db.close()
 
-if __name__ == "__main__":
-    print("[*] Memulai Radar Worker CCTV...")
-    last_active_id = None  
-
-    while True:
-        target_id = get_active_cctv_id()
-        
-        if target_id:
-            if target_id != last_active_id:
-                print("\n==================================================")
-                print(f"[*] RESTARTING WORKER -> Beralih ke CCTV ID: {target_id}")
-                print("==================================================")
-                last_active_id = target_id
-                
-            run_hls_worker(cctv_id=target_id)
-            
-            last_active_id = None 
-            time.sleep(2) 
-        else:
-            if last_active_id is not None or target_id != last_active_id:
-                print("\n[*] Tidak ada CCTV yang aktif. Menunggu perintah dari Dashboard...")
-                last_active_id = target_id # Set ke None agar tidak spam print
-                
-            time.sleep(5)
